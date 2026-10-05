@@ -10,6 +10,7 @@ import (
 
 	"template/internal/template/app"
 	"template/internal/template/config"
+	eventinfra "template/internal/template/infra/event"
 )
 
 func (a *application) serviceCmd() *cli.Command {
@@ -45,7 +46,8 @@ func service(ctx context.Context, logger *slog.Logger, conf config.Env) (err err
 		return err
 	}
 
-	svc := app.NewService(db.unit, dispatcher, appID)
+	dispatcherFactory := eventinfra.NewDispatcherFactory(appID, dispatcher)
+	svc := app.NewService(db.unit, dispatcherFactory)
 	httpServer, err := newHTTPServer(logger, conf, svc)
 	if err != nil {
 		return err
