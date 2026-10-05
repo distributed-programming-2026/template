@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+#MISE description="Manage infrastructure and all module Compose files"
+
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=["up", "down", "ps", "config", "logs"])
+    parser.add_argument("--infra-only", action="store_true")
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parent.parent
+    modules = sorted(root.glob("modules/*/compose.yaml"), key=lambda path: (path.parent.name != "template", path.parent.name))
+    env = dict(os.environ)
+    used_ports = set()
+    keys = [f"{path.parent.name.upper()}_{kind}_PORT" for path in modules for kind in ["GRPC", "HTTP", "MESSAGE_HANDLER"]]
+    for key in keys:
+        if key in env:
+            port = int(env[key])
+            if not 0 < port < 65536 or port in used_ports:
+                sys.exit(f"Invalid or duplicate local port: {key}={port}")
+            used_ports.add(port)
+    next_port = 8081
+    for key in keys:
+        if key not in env:
+            while next_port in used_ports:
+                next_port += 1
+            if next_port >= 65536:
+                sys.exit("No local ports available")
+            env[key] = str(next_port)
+            used_ports.add(next_port)
+            next_port += 1
+    command = ["docker", "compose", "--project-name", env.get("LOCAL_ENV_PROJECT", "distributed-programming-local"), "--project-directory", str(root), "-f", str(root / "compose.yaml")]
+    for path in modules:
+        command.extend(["-f", str(path)])
+
+    def compose(*arguments, **kwargs):
+        subprocess.run(command + list(arguments), cwd=root, env=env, check=True, **kwargs)
+
+    if args.action == "up":
+        if not args.infra_only:
+            architecture = subprocess.check_output(["docker", "info", "--format", "{{.Architecture}}"], env=env, text=True).strip()
+            env["GOARCH"] = {"aarch64": "arm64", "x86_64": "amd64"}.get(architecture, architecture)
+            for path in modules:
+                subprocess.run(["mise", "run", f"//modules/{path.parent.name}:build"], cwd=root, env=env, check=True)
+        compose("up", "-d", "--wait", "mysql", "rabbitmq")
+        # Provision every module on each up, including modules added after
+        # the infrastructure volumes were created.
+        for path in modules:
+            init_sql = path.parent / "docker/mysql/init.sql"
+            if init_sql.exists():
+                compose("exec", "-T", "mysql", "sh", "-c", 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root', input=init_sql.read_text(), text=True)
+        if not args.infra_only:
+            compose("up", "-d", "--build", "--wait")
+            for path in modules:
+                prefix = path.parent.name.upper()
+                print(f"{path.parent.name}: gRPC={env[prefix + '_GRPC_PORT']}, HTTP={env[prefix + '_HTTP_PORT']}, consumer health={env[prefix + '_MESSAGE_HANDLER_PORT']}")
+    elif args.action == "down":
+        compose("down", "--remove-orphans")
+    elif args.action == "logs":
+        compose("logs", "--tail", "100", "-f")
+    else:
+        compose(args.action)
+
+
+if __name__ == "__main__":
+    main()

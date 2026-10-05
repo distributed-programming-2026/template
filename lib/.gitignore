@@ -1,0 +1,7 @@
+# Generated Go code
+*.pb.go
+*.gen.go
+
+# Build and test artifacts
+/dist/
+coverage.out

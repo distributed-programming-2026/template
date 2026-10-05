@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+#MISE description="Verify module generation in a temporary copy"
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parent.parent
+with tempfile.TemporaryDirectory(prefix="service-generator-") as temporary:
+    copy = Path(temporary) / "template"
+    shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", "dist", "*.pb.go", "*.gen.go", ".idea"))
+    env = dict(os.environ, MISE_TRUSTED_CONFIG_PATHS=str(copy))
+    subprocess.run(["mise", "run", "generate-module", "sample_echo"], cwd=copy, env=env, check=True)
+    subprocess.run(["mise", "run", "generate-module", "sample_other"], cwd=copy, env=env, check=True)
+    for module in ["sample_echo", "sample_other"]:
+        generated = copy / "modules" / module
+        if list(generated.rglob("*.tpl")) or not (generated / "mise.toml").is_file():
+            raise RuntimeError("Generator did not strip template suffixes")
+        if not os.access(generated / "mise-tasks/generate-migration", os.X_OK):
+            raise RuntimeError("Generated migration task is not executable")
+    plan = subprocess.run(["mise", "tasks", "ls", "--all", "--name-only"], cwd=copy, env=env, check=True, capture_output=True, text=True)
+    for task in ["//lib:build", "//modules/sample_echo:build", "//modules/sample_other:build"]:
+        if task not in plan.stdout + plan.stderr:
+            raise RuntimeError("Root all did not discover every module")
+    workspace = (copy / "go.work").read_text()
+    if "generate-module.d" in workspace or "modules/template" in workspace:
+        raise RuntimeError("Template was added to the workspace")
+    subprocess.run(["mise", "run", "all"], cwd=copy, env=env, check=True)
+    subprocess.run(["mise", "run", "//modules/sample_echo:generate-migration", 'Create a "quoted" table'], cwd=copy, env=env, check=True)
+    subprocess.run(["mise", "run", "//modules/sample_echo:generate-migration", "Second migration"], cwd=copy, env=env, check=True)
+    migrations = copy / "modules/sample_echo/internal/sample_echo/infra/mysql/migrations"
+    versions = sorted(path.stem for path in migrations.glob("version*.go"))
+    if len(versions) != 3:
+        raise RuntimeError("Migration generator failed to produce unique versions")
+    factory = (migrations / "factory.go").read_text()
+    for version in versions:
+        if version.replace("version", "Version") not in factory:
+            raise RuntimeError("Generated migration is missing from the registry")
+    compose = subprocess.run(["mise", "run", "local-config"], cwd=copy, env=env, check=True, capture_output=True, text=True)
+    if "sample_echo-service:" not in compose.stdout or "sample_other-service:" not in compose.stdout or "template-service:" in compose.stdout:
+        raise RuntimeError("Local environment did not discover every module")
+    subprocess.run(["mise", "run", "//modules/sample_echo:build"], cwd=copy, env=env, check=True)
+    for name in ["sample_echo", "../bad", "Bad"]:
+        result = subprocess.run(["mise", "run", "generate-module", name], cwd=copy, env=env, capture_output=True, text=True)
+        if result.returncode == 0:
+            raise RuntimeError(f"Generator unexpectedly accepted {name!r}")
+    workspace_before = (copy / "go.work").read_text()
+    schema = copy / "mise-tasks/generate-module.d/api/events/events.proto.tpl"
+    schema.write_text(schema.read_text() + "\ninvalid protobuf syntax\n")
+    failed = subprocess.run(["mise", "run", "generate-module", "broken_echo"], cwd=copy, env=env, capture_output=True, text=True)
+    if failed.returncode == 0 or (copy / "modules/broken_echo").exists():
+        raise RuntimeError("Failed generation left a partial module")
+    if (copy / "go.work").read_text() != workspace_before:
+        raise RuntimeError("Failed generation changed the workspace")
+    print("Generator validation passed.")

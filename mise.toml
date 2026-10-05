@@ -5,6 +5,7 @@ _.source = "{{ config_root }}/mise-env/docker.sh"
 
 [monorepo]
 config_roots = [
+    "lib",
     "modules/*",
 ]
 
@@ -20,5 +21,23 @@ protoc-gen-go-grpc = "1.6.2"
 [tasks.all]
 description = "Generate, tidy, build, test, and lint every module sequentially"
 run = '''
+MISE_JOBS=1 mise run //lib/...:all
 MISE_JOBS=1 mise run //modules/...:all
 '''
+
+[tasks.local-up]
+description = "Build modules locally and start the complete local environment"
+run = "python3 mise-tasks/local-env up"
+
+[tasks.local-down]
+description = "Stop the local environment, preserving data volumes"
+run = "python3 mise-tasks/local-env down"
+
+[tasks.local-status]
+run = "python3 mise-tasks/local-env ps"
+
+[tasks.local-config]
+run = "python3 mise-tasks/local-env config"
+
+[tasks.local-logs]
+run = "python3 mise-tasks/local-env logs"
