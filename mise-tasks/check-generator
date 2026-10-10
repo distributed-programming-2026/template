@@ -12,6 +12,23 @@ with tempfile.TemporaryDirectory(prefix="service-generator-") as temporary:
     copy = Path(temporary) / "template"
     shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", "dist", "*.pb.go", "*.gen.go", ".idea"))
     env = dict(os.environ, MISE_TRUSTED_CONFIG_PATHS=str(copy))
+    # Schemas may live outside api and import schemas from another directory.
+    fixture_root = copy / "mise-tasks/generate-module.d/internal/template"
+    messages = fixture_root / "messages/types.proto.tpl"
+    messages.parent.mkdir(parents=True, exist_ok=True)
+    messages.write_text('''syntax = "proto3";
+package templateMessages;
+option go_package = "template/internal/template/messages;messages";
+message Payload { string Value = 1; }
+''')
+    consumer = fixture_root / "consumer/consumer.proto.tpl"
+    consumer.parent.mkdir(parents=True, exist_ok=True)
+    consumer.write_text('''syntax = "proto3";
+package templateConsumer;
+option go_package = "template/internal/template/consumer;consumer";
+import "template/internal/template/messages/types.proto";
+message Request { templateMessages.Payload Payload = 1; }
+''')
     subprocess.run(["mise", "run", "generate-module", "sample_echo"], cwd=copy, env=env, check=True)
     subprocess.run(["mise", "run", "generate-module", "sample_other"], cwd=copy, env=env, check=True)
     for module in ["sample_echo", "sample_other"]:
@@ -24,6 +41,40 @@ with tempfile.TemporaryDirectory(prefix="service-generator-") as temporary:
     for task in ["//lib:build", "//modules/sample_echo:build", "//modules/sample_other:build"]:
         if task not in plan.stdout + plan.stderr:
             raise RuntimeError("Root all did not discover every module")
+    # Import contracts from two generated modules in one process. Bare proto
+    # filenames used to collide in the global protobuf descriptor registry.
+    contract_test = copy / "modules/sample_echo/api/server/internalapi/contracts_test.go"
+    contract_test.write_text('''package sample_echointernalapi_test
+
+import (
+    "testing"
+
+    "google.golang.org/protobuf/reflect/protoregistry"
+
+    _ "sample_echo/api/events"
+    _ "sample_echo/internal/sample_echo/consumer"
+    _ "sample_other/api/events"
+    _ "sample_other/api/server/internalapi"
+)
+
+func TestContractDescriptorsCanCoexist(t *testing.T) {
+    for _, path := range []string{
+        "sample_echo/api/events/events.proto",
+        "sample_echo/internal/sample_echo/messages/types.proto",
+        "sample_echo/internal/sample_echo/consumer/consumer.proto",
+        "sample_echo/api/server/internalapi/internalapi.proto",
+        "sample_other/api/events/events.proto",
+        "sample_other/api/server/internalapi/internalapi.proto",
+    } {
+        if _, err := protoregistry.GlobalFiles.FindFileByPath(path); err != nil {
+            t.Fatal(err)
+        }
+    }
+}
+''')
+    subprocess.run(["mise", "exec", "--", "gofmt", "-w", str(contract_test)], cwd=copy, env=env, check=True)
+    module_file = copy / "modules/sample_echo/go.mod"
+    module_file.write_text(module_file.read_text() + "\nrequire sample_other v0.0.0\nreplace sample_other => ../sample_other\n")
     workspace = (copy / "go.work").read_text()
     if "generate-module.d" in workspace or "modules/template" in workspace:
         raise RuntimeError("Template was added to the workspace")

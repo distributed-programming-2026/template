@@ -23,13 +23,14 @@ run = """
 #!/usr/bin/env sh
 set -eu
 
-find . -name '*.proto' | while read -r proto_file; do
-    proto_dir=$(dirname "$proto_file")
+# Include the module name in descriptor paths to avoid cross-module conflicts.
+proto_root=$(dirname "$PWD")
+find "$PWD" -name '*.proto' | while read -r proto_file; do
     protoc \
-        --proto_path="$proto_dir" \
-        --go_out="$proto_dir" \
+        --proto_path="$proto_root" \
+        --go_out="$proto_root" \
         --go_opt=paths=source_relative \
-        --go-grpc_out="$proto_dir" \
+        --go-grpc_out="$proto_root" \
         --go-grpc_opt=paths=source_relative \
         "$proto_file"
 done
