@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/distributed-programming-2026/go-sdk/pkg/event"
 	"github.com/stretchr/testify/require"
@@ -51,10 +52,16 @@ func (b *logBuffer) count(message, key, value string) int {
 func checkEcho(t *testing.T, id, body string) event.Envelope {
 	t.Helper()
 	client := testEnv.connector.TransactionalClient()
-	var stored string
-	err := client.GetContext(t.Context(), "test.echo", &stored, "SELECT body FROM echo WHERE id = ?", id)
+	parsedID, err := uuid.Parse(id)
 	require.NoError(t, err)
-	require.Equal(t, body, stored)
+	var stored struct {
+		ID   []byte `db:"id"`
+		Body string `db:"body"`
+	}
+	err = client.GetContext(t.Context(), "test.echo", &stored, "SELECT id, body FROM echo WHERE id = ?", parsedID)
+	require.NoError(t, err)
+	require.Equal(t, parsedID[:], stored.ID)
+	require.Equal(t, body, stored.Body)
 
 	var rows []struct {
 		Payload []byte `db:"payload"`

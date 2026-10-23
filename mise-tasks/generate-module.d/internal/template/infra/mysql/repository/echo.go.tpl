@@ -28,6 +28,6 @@ func (r *echoRepository) NextID() (uuid.UUID, error) {
 func (r *echoRepository) Store(e domain.Echo) error {
 	_, err := r.client.ExecContext(r.ctx, "echo.store", `
 INSERT INTO echo (id, body) VALUES (?, ?)
-`, e.ID.String(), e.Body)
+`, e.ID, e.Body)
 	return err
 }
