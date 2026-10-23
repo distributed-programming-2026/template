@@ -1,4 +1,15 @@
 services:
+  gateway:
+    image: ghcr.io/distributed-programming-2026/gateway:v0.0.1
+    platform: linux/amd64
+    environment:
+      LOCAL_GATEWAY_CONFIG_HASH: ${LOCAL_GATEWAY_CONFIG_HASH:-}
+    ports:
+      - "${LOCAL_GATEWAY_PORT:-80}:80"
+      - "${LOCAL_GATEWAY_HEALTH_PORT:-15000}:15000"
+    volumes:
+      - ./dist/local/gateway:/config:ro
+
   mysql:
     image: mysql:8.4
     environment:

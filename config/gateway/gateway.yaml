@@ -1,0 +1,7 @@
+kind: gateway/v1
+port: 80
+healthzPort: 15000
+gatewayHealthHost: 0
+proxyTimeouts:
+  timeout: 10s
+  idleTimeout: 10s

@@ -20,8 +20,39 @@ Linux-бинарники через модульные задачи mise. Зат
 сервисы. SQL подготовки запускается при каждом старте, чтобы новые модули работали
 и с уже существующим volume MySQL.
 
-Корневой `compose.yaml` содержит только MySQL и RabbitMQ. Каждый модуль описывает
+Корневой `compose.yaml` содержит gateway, MySQL и RabbitMQ. Каждый модуль описывает
 свои сервисы, очередь, настройки подключения и подготовку базы у себя.
+
+Gateway использует образ `ghcr.io/distributed-programming-2026/gateway:v0.0.1`
+(Linux/amd64; на ARM Docker использует эмуляцию). Общая конфигурация gateway
+находится в `config/gateway/`, маршруты и объявления интерцепторов каждого
+модуля — в `modules/<name>/config/gateway/`.
+
+Перед `local-up` и `local-config` задача рекурсивно собирает `.yaml`/`.yml` из
+этих каталогов в `dist/local/gateway/`. Учитываются модули с `compose.yaml`;
+одноимённые файлы разных модулей не конфликтуют, удалённые конфиги убираются.
+Этот каталог монтируется в `/config` read-only. YAML не объединяется скриптом:
+проверка и merge по `kind`/`weight` выполняются самим gateway. При пересечении
+маршрутов задавайте разные `weight`; больший вес имеет приоритет.
+
+`local-up` сначала проверяет конфиги командой `check-config` из образа gateway,
+затем запускает окружение. Хеш содержимого передаётся в Compose, поэтому повторный
+`local-up` пересоздаёт gateway после изменения конфигов. Hot reload отсутствует.
+Не редактируйте `dist/local/gateway/` вручную. Для запуска напрямую через
+`docker compose` сначала выполните `mise run local-config`, чтобы собрать конфиги.
+
+Каждый новый модуль получает маршрут `/<name>/api/...` с удалением `/<name>`
+перед проксированием на `<name>-service:8082` внутри Compose-сети. Например:
+
+```sh
+curl -X POST localhost/billing/api/public/v1/echo \
+  -H 'Content-Type: application/json' -d '{"body":"привет"}'
+curl -f localhost:15000/readyz
+```
+
+Gateway работает и без модулей: неизвестные маршруты возвращают 404.
+Порты задаются через `LOCAL_GATEWAY_PORT` (80) и
+`LOCAL_GATEWAY_HEALTH_PORT` (15000).
 
 ```sh
 mise run local-config
@@ -89,6 +120,7 @@ Protobuf-дескрипторы используют путь с именем м
 mise run all
 mise run //modules/billing:integration-tests
 mise run check-generator
+mise run check-local-env
 ```
 
 `all` выполняет генерацию, tidy, Linux-сборку, unit и интеграционные тесты, lint. Интеграционные

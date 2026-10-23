@@ -2,10 +2,46 @@
 #MISE description="Manage infrastructure and all module Compose files"
 
 import argparse
+import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+
+
+def collect_gateway_config(root, modules):
+    # Flatten YAML files without parsing/merging them: gateway owns the merge
+    # semantics. Separate namespaces prevent modules with routes.yaml colliding.
+    sources = [("root", root / "config/gateway")]
+    sources.extend((path.parent.name, path.parent / "config/gateway") for path in modules)
+    files = []
+    for namespace, directory in sources:
+        for path in sorted(directory.rglob("*")):
+            if path.is_file() and path.suffix in {".yaml", ".yml"}:
+                files.append((f"{len(files):04d}-{namespace}-{path.name}", path.read_bytes()))
+    if not files or not files[0][0].startswith("0000-root-"):
+        sys.exit("Missing gateway configuration in config/gateway")
+    target = root / "dist/local/gateway"
+    # Keep the mount directory itself in place for already-running containers.
+    target.mkdir(parents=True, exist_ok=True)
+    names = {name for name, _ in files}
+    for path in target.iterdir():
+        if path.name in names:
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    digest = hashlib.sha256()
+    for name, content in files:
+        destination = target / name
+        if not destination.exists() or destination.read_bytes() != content:
+            temporary = destination.with_suffix(".tmp")
+            temporary.write_bytes(content)
+            temporary.replace(destination)
+        digest.update(name.encode() + b"\0" + content + b"\0")
+    return digest.hexdigest()
 
 
 def main():
@@ -16,6 +52,8 @@ def main():
     root = Path(__file__).resolve().parent.parent
     modules = sorted(root.glob("modules/*/compose.yaml"), key=lambda path: (path.parent.name != "template", path.parent.name))
     env = dict(os.environ)
+    if args.action in {"up", "config"}:
+        env["LOCAL_GATEWAY_CONFIG_HASH"] = collect_gateway_config(root, modules)
     used_ports = set()
     keys = [f"{path.parent.name.upper()}_{kind}_PORT" for path in modules for kind in ["GRPC", "HTTP", "MESSAGE_HANDLER"]]
     for key in keys:
@@ -43,6 +81,9 @@ def main():
 
     if args.action == "up":
         if not args.infra_only:
+            # Validate with the exact image used at runtime, before starting
+            # infrastructure. No dependency on a sibling gateway checkout.
+            compose("run", "--rm", "--no-deps", "gateway", "--config", "/config", "check-config")
             architecture = subprocess.check_output(["docker", "info", "--format", "{{.Architecture}}"], env=env, text=True).strip()
             env["GOARCH"] = {"aarch64": "arm64", "x86_64": "amd64"}.get(architecture, architecture)
             for path in modules:
@@ -56,6 +97,7 @@ def main():
                 compose("exec", "-T", "mysql", "sh", "-c", 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root', input=init_sql.read_text(), text=True)
         if not args.infra_only:
             compose("up", "-d", "--build", "--wait")
+            print(f"gateway: HTTP={env.get('LOCAL_GATEWAY_PORT', '80')}, health={env.get('LOCAL_GATEWAY_HEALTH_PORT', '15000')}")
             for path in modules:
                 prefix = path.parent.name.upper()
                 print(f"{path.parent.name}: gRPC={env[prefix + '_GRPC_PORT']}, HTTP={env[prefix + '_HTTP_PORT']}, consumer health={env[prefix + '_MESSAGE_HANDLER_PORT']}")

@@ -37,6 +37,9 @@ message Request { templateMessages.Payload Payload = 1; }
             raise RuntimeError("Generator did not strip template suffixes")
         if not os.access(generated / "mise-tasks/generate-migration", os.X_OK):
             raise RuntimeError("Generated migration task is not executable")
+        routes = (generated / "config/gateway/routes.yaml").read_text()
+        if f"name: {module}\n" not in routes or f"target: {module}-service:8082" not in routes or f"^/{module}/api/" not in routes:
+            raise RuntimeError("Generated gateway routes do not refer to their module")
     plan = subprocess.run(["mise", "tasks", "ls", "--all", "--name-only"], cwd=copy, env=env, check=True, capture_output=True, text=True)
     for task in ["//lib:build", "//modules/sample_echo:build", "//modules/sample_other:build"]:
         if task not in plan.stdout + plan.stderr:
@@ -92,6 +95,9 @@ func TestContractDescriptorsCanCoexist(t *testing.T) {
     compose = subprocess.run(["mise", "run", "local-config"], cwd=copy, env=env, check=True, capture_output=True, text=True)
     if "sample_echo-service:" not in compose.stdout or "sample_other-service:" not in compose.stdout or "template-service:" in compose.stdout:
         raise RuntimeError("Local environment did not discover every module")
+    collected = "\n".join(path.read_text() for path in (copy / "dist/local/gateway").glob("*.yaml"))
+    if "ghcr.io/distributed-programming-2026/gateway:v0.0.1" not in compose.stdout or any(f"target: {module}-service:8082" not in collected for module in ["sample_echo", "sample_other"]):
+        raise RuntimeError("Local environment did not collect every module's gateway config")
     subprocess.run(["mise", "run", "//modules/sample_echo:build"], cwd=copy, env=env, check=True)
     for name in ["sample_echo", "../bad", "Bad"]:
         result = subprocess.run(["mise", "run", "generate-module", name], cwd=copy, env=env, capture_output=True, text=True)

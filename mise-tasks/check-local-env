@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+#MISE description="Check gateway config collection without Docker"
+
+from pathlib import Path
+import runpy
+import tempfile
+import unittest
+
+
+collect = runpy.run_path(str(Path(__file__).with_name("local-env")))["collect_gateway_config"]
+
+
+class GatewayConfigTests(unittest.TestCase):
+    def test_collection_and_refresh(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def write(name, content):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+                return path
+
+            write("config/gateway/gateway.yaml", "kind: gateway/v1\nport: 8000\n")
+            first = write("modules/first/compose.yaml", "services: {}\n")
+            second = write("modules/second/compose.yaml", "services: {}\n")
+            route = write("modules/first/config/gateway/routes.yaml", "first routes\n")
+            write("modules/second/config/gateway/routes.yaml", "second routes\n")
+            write("modules/second/config/gateway/nested/interceptor.yml", "interceptor\n")
+            write("modules/second/config/gateway/README.md", "ignored")
+            write("modules/disabled/config/gateway/routes.yaml", "not enabled")
+            modules = [first, second]
+            digest = collect(root, modules)
+            target = root / "dist/local/gateway"
+            contents = lambda: sorted(path.read_text() for path in target.iterdir())
+            self.assertEqual(contents(), sorted([
+                "kind: gateway/v1\nport: 8000\n", "first routes\n",
+                "second routes\n", "interceptor\n",
+            ]))
+            timestamps = {path.name: path.stat().st_mtime_ns for path in target.iterdir()}
+            self.assertEqual(collect(root, modules), digest)
+            self.assertEqual(timestamps, {path.name: path.stat().st_mtime_ns for path in target.iterdir()})
+            route.write_text("updated routes\n")
+            changed = collect(root, modules)
+            self.assertNotEqual(changed, digest)
+            self.assertIn("updated routes\n", contents())
+            route.unlink()
+            self.assertNotEqual(collect(root, modules), changed)
+            self.assertNotIn("updated routes\n", contents())
+            collect(root, [first])
+            self.assertEqual(contents(), ["kind: gateway/v1\nport: 8000\n"])
+
+    def test_missing_global_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(SystemExit, "Missing gateway configuration"):
+                collect(Path(temporary), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -36,6 +36,7 @@ envelope с event ID, producer, type, временем и correlation ID. Общ
 - `internal/template/infra/handlers`: HTTP, gRPC и события.
 - `internal/integration-tests`: инфраструктура, контейнеры и интеграционные проверки.
 - `api`: protobuf/OpenAPI-контракты; generated Go-код исключён из Git.
+- `config/gateway`: маршруты и объявления интерцепторов модуля для общего gateway.
 
 Repository provider хранит транзакционный клиент и выдаёт репозиторий с контекстом
 операции. `app` использует `ExecuteWithRepositoryProvider`; SQL-клиент в него не
@@ -51,6 +52,18 @@ mise run local-up
 
 Корневой mise автоматически подключает модульный `compose.yaml`, собирает бинарник
 и поднимает сервис и consumer в контейнерах.
+
+Конфиги из `config/gateway/` автоматически собираются вместе с конфигами
+остальных модулей при `local-up`. Общие настройки gateway находятся в корневом
+`config/gateway/`. Маршрут `/template/api/...` проксируется на
+`template-service:8082`, удаляя префикс `/template`:
+
+```sh
+curl -X POST localhost/template/api/public/v1/echo \
+  -H 'Content-Type: application/json' -d '{"body":"hello"}'
+```
+
+После изменения конфигов повторите `mise run local-up` для перезапуска gateway.
 
 Бинарник поддерживает `service` (по умолчанию) и `message-handler`.
 `service` запускает HTTP, gRPC и relay. `message-handler` запускает consumer
