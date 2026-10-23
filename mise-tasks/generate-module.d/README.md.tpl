@@ -46,6 +46,36 @@ UUID в таблице `echo` хранится как `BINARY(16)`. В SQL-па�
 `uuid.UUID`: MySQL-клиент SDK преобразует его в 16 байт. В HTTP, gRPC и событиях
 ID остаётся строкой.
 
+## Пример интерцептора gateway
+
+`internal/template/infra/handlers/gateway` реализует gRPC API интерцептора через
+`lib/gateway/interceptor` и регистрируется на сервере
+модуля (`8081`) вместе с internal API. `config/gateway/interceptor.yaml` объявляет
+интерцептор, а `routes.yaml` подключает его к маршруту `/template/api/...`.
+`local-up` автоматически собирает оба файла в конфигурацию gateway.
+
+Пример показывает три решения:
+
+- `requestHeaders`: устанавливает `X-Demo-Request-ID` из `context.requestId`, заменяя значение клиента.
+- `responseHeaders`: добавляет `X-Demo-Interceptor: template` в ответ backend.
+- `requestHeaders` с `X-Demo-Deny: true`: возвращает JSON с HTTP `403` через `immediateResponse`; backend и response-фаза не вызываются.
+
+Это демонстрация API. Проверку заголовка `X-Demo-Deny` следует заменить политикой
+приложения, если нужна авторизация или другая бизнес-проверка.
+
+После `mise run local-up`:
+
+```sh
+curl -i -X POST localhost/template/api/public/v1/echo \
+  -H 'Content-Type: application/json' -d '{"body":"through gateway"}'
+curl -i -X POST localhost/template/api/public/v1/echo \
+  -H 'Content-Type: application/json' -H 'X-Demo-Deny: true' -d '{"body":"denied"}'
+```
+
+Первый ответ содержит `X-Demo-Interceptor: template`, второй — `403`.
+Для отключения примера удалите `interceptors` у маршрута. При обращении к HTTP
+порту модуля напрямую интерцептор не вызывается.
+
 ## Запуск
 
 Из корня репозитория:

@@ -1,0 +1,126 @@
+// Contract copied from gateway v0.0.1; only go_package differs.
+syntax = "proto3";
+package interceptorgrpc;
+
+option go_package = "github.com/distributed-programming-2026/lib/gateway/interceptor;interceptor";
+
+// Unary processing of one configured phase. Both transports share these semantics.
+// Draft revision: not wire-compatible with the original authorization-only API.
+service Interceptor {
+  rpc Intercept(InterceptRequest) returns (InterceptResponse);
+}
+
+message InterceptRequest {
+  reserved 1 to 6;
+  ProcessingContext context = 10;
+  // Exactly one event. Empty body is represented by HttpBody with empty data.
+  oneof event {
+    HttpHeaders requestHeaders = 11;
+    HttpHeaders responseHeaders = 12;
+    HttpBody requestBody = 13;
+    HttpBody responseBody = 14;
+    HttpTrailers requestTrailers = 15;
+    HttpTrailers responseTrailers = 16;
+  }
+}
+
+message ProcessingContext {
+  string requestId = 1;
+  HttpRequest request = 2;
+  map<string, string> pathParameters = 3;
+  map<string, string> parameters = 4;
+  // Gateway-generated response context; absent for a normal upstream response.
+  GatewayError gatewayError = 5;
+}
+
+message HttpRequest {
+  string method = 1;
+  string scheme = 2;
+  string authority = 3;
+  string path = 4;
+  // Preserves duplicate keys, ordering and escaping; no leading '?'.
+  string rawQuery = 5;
+  repeated Header headers = 6;
+}
+
+message HttpHeaders {
+  repeated Header headers = 1;
+  // Required for responseHeaders (200..599), absent for requestHeaders.
+  optional int32 statusCode = 2;
+  bool endOfStream = 3;
+}
+
+message HttpBody {
+  // Full buffered body. Arbitrary bytes, not necessarily UTF-8 or JSON.
+  bytes data = 1;
+  bool endOfStream = 2;
+}
+
+message HttpTrailers {
+  repeated Header trailers = 1;
+}
+
+message GatewayError {
+  // upstream_unavailable, upstream_timeout, interceptor_error,
+  // interceptor_timeout, request_body_too_large, response_body_too_large,
+  // method_not_allowed, basic_auth_denied, redirect_limit,
+  // request_body_read_error, request_body_read_timeout, upgrade_processing_unsupported.
+  string code = 1;
+  string interceptorId = 2;
+}
+
+message InterceptResponse {
+  reserved 1, 2;
+  oneof result {
+    ContinueResponse continueResponse = 10;
+    ImmediateResponse immediateResponse = 11;
+  }
+}
+
+message ContinueResponse {
+  HeaderMutation headerMutation = 1;
+  BodyMutation bodyMutation = 2;
+  HeaderMutation trailerMutation = 3;
+  RequestMutation requestMutation = 4;
+  // Only responseHeaders. Allows replacement of an upstream HTTP status.
+  optional int32 statusCode = 5;
+  // Request phases only: applied once before response-phase processors.
+  HeaderMutation responseHeaderMutation = 6;
+}
+
+// Applies remove, then set, then append. Set replaces ALL prior values
+// case-insensitively (SetOrReplaceHeaders); append is always explicit.
+message HeaderMutation {
+  repeated string remove = 1;
+  repeated HeaderValues set = 2;
+  repeated HeaderValues append = 3;
+}
+
+message HeaderValues {
+  string key = 1;
+  repeated string values = 2;
+}
+
+message BodyMutation {
+  // Presence replaces the full body, including with empty bytes.
+  bytes data = 1;
+}
+
+message RequestMutation {
+  // Only requestHeaders. Omitted values preserve the existing field.
+  optional string method = 1;
+  optional string authority = 2;
+  optional string path = 3;
+  optional string rawQuery = 4;
+}
+
+message ImmediateResponse {
+  int32 statusCode = 1;
+  repeated Header headers = 2;
+  bytes body = 3;
+}
+
+message Header {
+  string key = 1;
+  string value = 2;
+}

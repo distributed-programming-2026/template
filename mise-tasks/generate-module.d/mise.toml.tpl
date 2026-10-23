@@ -19,6 +19,7 @@ run = [
 run = "go generate ./..."
 
 [tasks.grpc-generate]
+depends = ["//lib:generate"]
 run = """
 #!/usr/bin/env sh
 set -eu

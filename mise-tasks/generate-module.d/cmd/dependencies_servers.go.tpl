@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 
+	gatewayapi "github.com/distributed-programming-2026/lib/gateway/interceptor"
 	grpcserver "google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
@@ -12,6 +13,7 @@ import (
 	internalapi "template/api/server/internalapi"
 	"template/internal/template/app"
 	"template/internal/template/config"
+	gatewayhandler "template/internal/template/infra/handlers/gateway"
 	internalhandler "template/internal/template/infra/handlers/internalapi"
 	publichandler "template/internal/template/infra/handlers/public"
 )
@@ -34,6 +36,7 @@ func newGRPCServer(logger *slog.Logger, conf config.Env, svc *app.Service) (*grp
 		GraceTimeout: conf.App.GraceTimeout,
 	}, func(server *grpcserver.Server) error {
 		internalapi.RegisterTemplateServiceServer(server, internalhandler.NewHandler(svc, logger))
+		gatewayapi.RegisterInterceptorServer(server, gatewayhandler.NewHandler())
 		reflection.Register(server)
 		return nil
 	})

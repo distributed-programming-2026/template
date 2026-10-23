@@ -7,3 +7,8 @@ routes:
       old: '^/template/(.*)$'
       new: '/$1'
     target: template-service:8082
+    interceptors:
+      - id: template-interceptor
+        processingMode:
+          requestHeaders: true
+          responseHeaders: true

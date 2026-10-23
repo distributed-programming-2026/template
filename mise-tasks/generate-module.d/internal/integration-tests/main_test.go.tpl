@@ -178,7 +178,10 @@ func (e *environment) startApplication(ctx context.Context, command string) (tes
 		Image:        "distributed-programming-template:integration",
 		Cmd:          []string{command},
 		ExposedPorts: []string{"8081/tcp", "8082/tcp"},
-		Networks:     []string{e.network.Name},
+		NetworkAliases: map[string][]string{
+			e.network.Name: {moduleID + "-" + command},
+		},
+		Networks: []string{e.network.Name},
 		Env: map[string]string{
 			prefix + "MYSQL_ADDRESS":         "mysql:3306",
 			prefix + "MYSQL_DATABASE":        e.conf.MySQL.Database,
